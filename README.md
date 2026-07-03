@@ -6,22 +6,39 @@ Community API — a free, community-driven feed of indicators of compromise
 
 ## Tools
 
-- **`get_recent_iocs(days=3)`** — recently added IOCs (max 7 days back). ! This uses a tonne of tokens, as it retrieves a full 24hrs worth of IOCs !
+### Recent IOC feeds
+
+- **`get_recent_iocs(days=1, limit=50)`** — recently added IOCs (1–7 days
+  back). Returns up to `limit` records. Warning: large `days` values return
+  many IOCs and can use a lot of tokens — prefer `filter_recent_iocs` when
+  you only need a filtered subset.
+- **`filter_recent_iocs(days=1, limit=100, query=None, ioc_type=None, threat_type=None, confidence_min=None)`**
+  — fetch recent IOCs and filter client-side by malware/tags/IOC text
+  (`query`), IOC type, threat type, and minimum confidence. Deduplicates
+  before applying `limit`.
+
+### Lookups & search
+
 - **`get_ioc_by_id(ioc_id)`** — look up a single IOC by its ThreatFox ID.
 - **`search_ioc(search_term, exact_match=False)`** — search for an IOC
   (IP, domain, URL, ip:port).
 - **`search_by_hash(file_hash)`** — find IOCs associated with an MD5 or
   SHA256 file hash.
+
+### Reference lists & metadata
+
 - **`get_tag_info(tag, limit=100)`** — IOCs associated with a tag.
 - **`get_malware_info(malware, limit=100)`** — IOCs associated with a
   malware family (Malpedia name).
 - **`get_malware_label(malware, platform=None)`** — resolve a malware name
-  to its correct Malpedia label.
+  to its correct Malpedia label. Optional `platform`: `win`, `osx`, `apk`,
+  `jar`, or `elf`.
 - **`get_malware_list()`** — full list of known malware families.
 - **`get_ioc_types()`** — list of supported IOC / threat types.
 - **`get_tag_list()`** — list of known tags.
 
-This covers the read/lookup side of the API. It intentionally leaves out
+This covers the read/lookup side of the API, including client-side filtering
+of recent IOCs. It intentionally leaves out
 `submit_ioc` (which writes to the shared community database) — see
 "Notes / next steps" below if you want to add that.
 
