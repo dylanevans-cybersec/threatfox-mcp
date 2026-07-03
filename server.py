@@ -127,14 +127,14 @@ async def get_recent_summary(days: int = 1) -> dict[str, Any]:
     highest_confidence = 0
 
     for ioc in data:
-        ioc_types[ioc.get("ioc_type", "unknown")] += 1
-        threat_types[ioc.get("threat_type", "unknown")] += 1
-        malware[ioc.get("malware", "unknown")] += 1
+        ioc_types[ioc.get("ioc_type") or "unknown"] += 1
+        threat_types[ioc.get("threat_type") or "unknown"] += 1
+        malware[ioc.get("malware") or "unknown"] += 1
 
-        for tag in ioc.get("tags", []):
+        for tag in (ioc.get("tags") or []):
             tags[tag] += 1
 
-        confidence = int(ioc.get("confidence_level", 0))
+        confidence = int(ioc.get("confidence_level") or 0)
         confidence_total += confidence
         highest_confidence = max(highest_confidence, confidence)
 
