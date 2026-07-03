@@ -24,6 +24,7 @@ Run (for local testing over stdio):
 
 import os
 from typing import Any
+from collections import Counter
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -45,18 +46,120 @@ async def _query(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_recent_iocs(days: int = 3) -> dict[str, Any]:
+async def get_recent_iocs(days: int = 1, limit: int = 50,) -> dict[str, Any]:
     """Get recently added IOCs from ThreatFox.
 
     Args:
-        days: Number of days to look back, based on first_seen. Min: 1,
-            Max: 7. Default: 3.
+        days: Number of days to look back (1-7).
+        limit: Maximum number of IOCs to return.
 
     Returns:
-        A dict with query_status and a list of IOC records under "data".
+        A dict containing the most recent IOCs.
     """
-    return await _query({"query": "get_iocs", "days": days})
+    result = await _query({"query": "get_iocs", "days": days})
 
+    if result.get("query_status") == "ok":
+        data = result.get("data", [])
+        result["total_results"] = len(data)
+        result["returned_results"] = min(limit, len(data))
+        result["data"] = data[:limit]
+
+    return result
+
+@mcp.tool()
+async def filter_recent_iocs(days: int = 1, limit: int = 100, malware: str | None = None, ioc_type: str | None = None, threat_type: str | None = None, confidence_min: int | None = None,) -> dict[str, Any]:
+    """Filter recently added IOCs."""
+
+    result = await _query({"query": "get_iocs", "days": days})
+
+    if result.get("query_status") != "ok":
+        return result
+
+    data = result.get("data", [])
+
+    if malware:
+        data = [
+            i for i in data
+            if i.get("malware", "").lower() == malware.lower()
+        ]
+
+    if ioc_type:
+        data = [
+            i for i in data
+            if i.get("ioc_type", "").lower() == ioc_type.lower()
+        ]
+
+    if threat_type:
+        data = [
+            i for i in data
+            if i.get("threat_type", "").lower() == threat_type.lower()
+        ]
+
+    if confidence_min is not None:
+        data = [
+            i for i in data
+            if int(i.get("confidence_level", 0)) >= confidence_min
+        ]
+
+    result["total_results"] = len(data)
+    result["returned_results"] = min(limit, len(data))
+    result["data"] = data[:limit]
+
+    return result
+
+@mcp.tool()
+async def get_recent_summary(days: int = 1) -> dict[str, Any]:
+    """Summarise recently added ThreatFox IOCs."""
+
+    result = await _query({"query": "get_iocs", "days": days})
+
+    if result.get("query_status") != "ok":
+        return result
+
+    data = result.get("data", [])
+
+    ioc_types = Counter()
+    threat_types = Counter()
+    malware = Counter()
+    tags = Counter()
+
+    confidence_total = 0
+    highest_confidence = 0
+
+    for ioc in data:
+        ioc_types[ioc.get("ioc_type", "unknown")] += 1
+        threat_types[ioc.get("threat_type", "unknown")] += 1
+        malware[ioc.get("malware", "unknown")] += 1
+
+        for tag in ioc.get("tags", []):
+            tags[tag] += 1
+
+        confidence = int(ioc.get("confidence_level", 0))
+        confidence_total += confidence
+        highest_confidence = max(highest_confidence, confidence)
+
+    average_confidence = (
+        round(confidence_total / len(data), 2)
+        if data else 0
+    )
+
+    return {
+        "query_status": "ok",
+        "days": days,
+        "total_iocs": len(data),
+        "ioc_types": dict(ioc_types),
+        "threat_types": dict(threat_types),
+        "top_malware": [
+            {"name": name, "count": count}
+            for name, count in malware.most_common(10)
+        ],
+        "top_tags": [
+            {"name": name, "count": count}
+            for name, count in tags.most_common(10)
+        ],
+        "highest_confidence": highest_confidence,
+        "average_confidence": average_confidence,
+    }
 
 @mcp.tool()
 async def get_ioc_by_id(ioc_id: str) -> dict[str, Any]:
