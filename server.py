@@ -25,6 +25,7 @@ Run (for local testing over stdio):
 import os
 from typing import Any
 from collections import Counter
+from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -44,6 +45,24 @@ async def _query(payload: dict[str, Any]) -> dict[str, Any]:
         resp.raise_for_status()
         return resp.json()
 
+def _matches_query(ioc: dict[str, Any], query: str) -> bool:
+    """Loose semantic match across IOC fields."""
+    if not query:
+        return True
+
+    q = query.lower()
+
+    malware = (ioc.get("malware") or "").lower()
+    malware_printable = (ioc.get("malware_printable") or "").lower()
+    tags = [t.lower() for t in (ioc.get("tags") or [])]
+    ioc_value = (ioc.get("ioc") or "").lower()
+
+    return (
+        q in malware
+        or q in malware_printable
+        or q in ioc_value
+        or any(q in t for t in tags)
+    )
 
 @mcp.tool()
 async def get_recent_iocs(days: int = 1, limit: int = 50,) -> dict[str, Any]:
@@ -67,99 +86,63 @@ async def get_recent_iocs(days: int = 1, limit: int = 50,) -> dict[str, Any]:
     return result
 
 @mcp.tool()
-async def filter_recent_iocs(days: int = 1, limit: int = 100, malware: str | None = None, ioc_type: str | None = None, threat_type: str | None = None, confidence_min: int | None = None,) -> dict[str, Any]:
-    """Filter recently added IOCs."""
+async def filter_recent_iocs(
+    days: int = 1,
+    limit: int = 100,
+    query: str | None = None,
+    ioc_type: str | None = None,
+    threat_type: str | None = None,
+    confidence_min: int | None = None,
+) -> dict[str, Any]:
+    """Semantically filter recent IOCs across malware, tags, and IOC value."""
 
     result = await _query({"query": "get_iocs", "days": days})
 
     if result.get("query_status") != "ok":
         return result
 
-    data = result.get("data", [])
+    data = result.get("data") or []
 
-    if malware:
-        data = [
-            i for i in data
-            if i.get("malware", "").lower() == malware.lower()
-        ]
+    # --- semantic filter ---
+    if query:
+        data = [ioc for ioc in data if _matches_query(ioc, query)]
 
+    # --- structured filters ---
     if ioc_type:
         data = [
-            i for i in data
-            if i.get("ioc_type", "").lower() == ioc_type.lower()
+            ioc for ioc in data
+            if (ioc.get("ioc_type") or "").lower() == ioc_type.lower()
         ]
 
     if threat_type:
         data = [
-            i for i in data
-            if i.get("threat_type", "").lower() == threat_type.lower()
+            ioc for ioc in data
+            if (ioc.get("threat_type") or "").lower() == threat_type.lower()
         ]
 
     if confidence_min is not None:
         data = [
-            i for i in data
-            if int(i.get("confidence_level", 0)) >= confidence_min
+            ioc for ioc in data
+            if int(ioc.get("confidence_level") or 0) >= confidence_min
         ]
 
-    result["total_results"] = len(data)
-    result["returned_results"] = min(limit, len(data))
-    result["data"] = data[:limit]
-
-    return result
-
-@mcp.tool()
-async def get_recent_summary(days: int = 1) -> dict[str, Any]:
-    """Summarise recently added ThreatFox IOCs."""
-
-    result = await _query({"query": "get_iocs", "days": days})
-
-    if result.get("query_status") != "ok":
-        return result
-
-    data = result.get("data", [])
-
-    ioc_types = Counter()
-    threat_types = Counter()
-    malware = Counter()
-    tags = Counter()
-
-    confidence_total = 0
-    highest_confidence = 0
+    # --- dedupe ---
+    seen = set()
+    deduped = []
 
     for ioc in data:
-        ioc_types[ioc.get("ioc_type") or "unknown"] += 1
-        threat_types[ioc.get("threat_type") or "unknown"] += 1
-        malware[ioc.get("malware") or "unknown"] += 1
+        key = ioc.get("id") or ioc.get("ioc")
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(ioc)
 
-        for tag in (ioc.get("tags") or []):
-            tags[tag] += 1
+    # --- truncate ---
+    result["total_results"] = len(deduped)
+    result["returned_results"] = min(limit, len(deduped))
+    result["data"] = deduped[:limit]
 
-        confidence = int(ioc.get("confidence_level") or 0)
-        confidence_total += confidence
-        highest_confidence = max(highest_confidence, confidence)
-
-    average_confidence = (
-        round(confidence_total / len(data), 2)
-        if data else 0
-    )
-
-    return {
-        "query_status": "ok",
-        "days": days,
-        "total_iocs": len(data),
-        "ioc_types": dict(ioc_types),
-        "threat_types": dict(threat_types),
-        "top_malware": [
-            {"name": name, "count": count}
-            for name, count in malware.most_common(10)
-        ],
-        "top_tags": [
-            {"name": name, "count": count}
-            for name, count in tags.most_common(10)
-        ],
-        "highest_confidence": highest_confidence,
-        "average_confidence": average_confidence,
-    }
+    return result
 
 @mcp.tool()
 async def get_ioc_by_id(ioc_id: str) -> dict[str, Any]:
